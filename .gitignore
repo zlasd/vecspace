@@ -1,0 +1,23 @@
+# Dependencies and generated builds
+node_modules/
+dist/
+build/
+coverage/
+.cache/
+.vite/
+playwright-report/
+test-results/
+*.tsbuildinfo
+
+# Local secrets and user inputs
+.env
+.env.*
+!.env.example
+work/
+local-data/
+*.log
+
+# OS and editor files
+.DS_Store
+.idea/
+.vscode/
