@@ -52,11 +52,11 @@ describe("actual worker request protocol", () => {
     expect(
       (
         await job("hash", {
-          file: { size: 51 * 1024 * 1024 },
+          file: { size: 2 * 1024 * 1024 * 1024 + 1 },
           algorithm: "SHA-256",
         })
       ).error,
-    ).toBe("LIMIT");
+    ).toBe("HASH_LIMIT");
   });
   it("returns usable PDF files and progress through the actual dispatcher", async () => {
     const doc = await PDFDocument.create();
@@ -82,4 +82,87 @@ describe("actual worker request protocol", () => {
       ),
     ).toBe(true);
   });
+});
+
+describe("expanded worker options", () => {
+  it("applies encoding, padding and wrapping options", async () => {
+    const encoded = await job("base64", {
+      text: "你好",
+      encoding: "utf-16le",
+      padding: "include",
+      url: true,
+    });
+    const decoded = await job("base64", {
+      text: encoded.result.text,
+      encoding: "utf-16le",
+      decode: true,
+      url: true,
+    });
+    expect(decoded.result.text).toBe("你好");
+    const wrapped = await job("base64", {
+      text: "a".repeat(100),
+      wrap: 64,
+      padding: "omit",
+    });
+    expect(wrapped.result.text.split("\n")[0]).toHaveLength(64);
+    expect(wrapped.result.text).not.toContain("=");
+  });
+  it("hashes hexadecimal input bytes instead of their text spelling", async () => {
+    expect(
+      (
+        await job("hash", {
+          text: "616263",
+          inputFormat: "hex",
+          algorithm: "MD5",
+          outputFormat: "HEX",
+        })
+      ).result.text,
+    ).toBe("900150983CD24FB0D6963F7D28E17F72");
+  });
+  it("reads PDF files in the worker and returns custom-named groups", async () => {
+    const pdf = await PDFDocument.create();
+    for (let i = 0; i < 4; i++) pdf.addPage([100 + i, 200]);
+    const file = new File(
+      [(await pdf.save()) as Uint8Array<ArrayBuffer>],
+      "source.pdf",
+    );
+    const result = await job("split", {
+      file,
+      range: "1-2;last",
+      mode: "custom",
+      size: 1,
+      outputName: "report",
+    });
+    expect(result.result.files.map((f: any) => f.name)).toEqual([
+      "report-001.pdf",
+      "report-002.pdf",
+    ]);
+    expect(
+      (await PDFDocument.load(result.result.files[1].bytes))
+        .getPage(0)
+        .getWidth(),
+    ).toBe(103);
+    expect(scope.postMessage.mock.calls.at(-1)![1]).toHaveLength(2);
+  });
+});
+
+it("forwards curve, digest and signature structure when checking key pairs", async () => {
+  const keyOptions = {
+    curve: "P-384",
+    hash: "SHA-384",
+    ecdsaFormat: "der",
+    encoding: "hex",
+  };
+  const generated = await job("keys", {
+    algorithm: "ECDSA",
+    bits: 2048,
+    keyOptions,
+  });
+  const matched = await job("match", {
+    algorithm: "ECDSA",
+    privateKey: generated.result.privatePem,
+    publicKey: generated.result.publicPem,
+    keyOptions,
+  });
+  expect(matched.result.valid).toBe(true);
 });

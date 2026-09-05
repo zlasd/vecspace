@@ -75,12 +75,25 @@ export const errors: Record<string, [string, string]> = {
     "Invalid JSON. Check quotes, commas, and nesting.",
   ],
   LIMIT: [
-    "输入超过当前限制。文本最多 2 MiB，文件合计最多 50 MiB，PDF 最多 300 页。",
-    "Input exceeds the current limit: 2 MiB of text, 50 MiB of files, or 300 PDF pages.",
+    "输入或输出超过当前工具限制，请减少文件、文本或页面数量。",
+    "Input or output exceeds this tool’s limit. Reduce file size, text length, or page count.",
   ],
   OUTPUT_LIMIT: [
-    "图片输出合计超过 150 MiB，请减少页数或降低倍率。",
-    "Exported images exceed 150 MiB. Select fewer pages or reduce the scale.",
+    "图片输出合计超过 512 MiB，请减少页数或降低倍率。",
+    "Exported images exceed 512 MiB. Select fewer pages or reduce the scale.",
+  ],
+  PDF_LIMIT: [
+    "PDF 文件合计最多 512 MiB，页面最多 5,000 页。",
+    "PDF files may total up to 512 MiB and 5,000 pages.",
+  ],
+  HASH_LIMIT: ["哈希文件最多 2 GiB。", "Hash input files may be up to 2 GiB."],
+  ENCODING: [
+    "内容无法使用所选字符编码表示或解码。",
+    "The content cannot be encoded or decoded using the selected character encoding.",
+  ],
+  FORMAT: [
+    "当前浏览器不支持所选图像输出格式，请选择 PNG 或 JPEG。",
+    "This browser does not support the selected image output format. Choose PNG or JPEG.",
   ],
   PAGES: [
     "页码范围无效或为空。请使用 1,3-5；页面可重复，顺序将保留。",
@@ -99,8 +112,8 @@ export const errors: Record<string, [string, string]> = {
     "Cannot read the image. Use a valid JPEG or PNG.",
   ],
   PIXELS: [
-    "图像尺寸过大，请降低倍率或使用较小图片（最多 1600 万像素）。",
-    "Image dimensions are too large. Reduce scale or use smaller images (16 megapixels maximum).",
+    "图像尺寸过大，请降低倍率或使用较小图片（最多 6400 万像素）。",
+    "Image dimensions are too large. Reduce scale or use smaller images (64 megapixels maximum).",
   ],
   KEY: [
     "密钥、签名格式或算法不匹配。支持 JWK、SPKI 公钥与 PKCS#8 私钥。",

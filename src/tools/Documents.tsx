@@ -12,7 +12,7 @@ import {
   FileText,
 } from "lucide-react";
 import { useLanguage, errorCode } from "../i18n";
-import { MAX_BYTES } from "../engines/developer";
+import { MAX_PDF_BYTES as MAX_BYTES, MAX_IMAGE_OUTPUT } from "../limits";
 import { MAX_PAGES, pagesFromRange, type ResultFile } from "../engines/pdf";
 import {
   canvasBytes,
@@ -32,7 +32,8 @@ import {
 type Input = {
   id: number;
   name: string;
-  bytes: Uint8Array;
+  bytes?: Uint8Array;
+  file: File;
   size: number;
   doc?: PDFDocumentProxy;
   count: number;
@@ -93,10 +94,12 @@ function Preview({
   input,
   page,
   zoom,
+  rotation,
 }: {
   input: Input;
   page: number;
   zoom: number;
+  rotation: number;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [error, setError] = useState("");
@@ -105,17 +108,13 @@ function Preview({
     const controller = new AbortController();
     setError("");
     if (input.doc && canvas.current)
-      renderPage(
-        input.doc,
-        page,
-        zoom,
-        controller.signal,
-        canvas.current,
-      ).catch((e) => {
+      renderPage(input.doc, page, zoom, controller.signal, canvas.current, {
+        rotation,
+      }).catch((e) => {
         if (!controller.signal.aborted) setError(errorCode(e));
       });
     return () => controller.abort();
-  }, [input, page, zoom]);
+  }, [input, page, zoom, rotation]);
   return (
     <div className="page-preview">
       <ErrorNotice code={error} />
@@ -142,6 +141,16 @@ export default function Documents({ id }: { id: string }) {
   const [quality, setQuality] = useState(0.9);
   const [page, setPage] = useState(0);
   const [zoom, setZoom] = useState(1);
+  const [rotation, setRotation] = useState(0);
+  const [transparent, setTransparent] = useState(false);
+  const [outputName, setOutputName] = useState("");
+  const [imageOptions, setImageOptions] = useState({
+    dpi: 96,
+    fit: "contain",
+    width: 210,
+    height: 297,
+    autoOrientation: false,
+  });
   const [gallery, setGallery] = useState(0);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -239,7 +248,7 @@ export default function Documents({ id }: { id: string }) {
         let width = image?.width;
         let height = image?.height;
         if (!imageMode) {
-          const load = openPDF(bytes);
+          const load = openPDF(bytes, true);
           loading.current = load;
           try {
             doc = await load.promise;
@@ -252,7 +261,7 @@ export default function Documents({ id }: { id: string }) {
             break;
           }
           count = doc.numPages;
-          if (count > MAX_PAGES) throw new Error("LIMIT");
+          if (count > MAX_PAGES) throw new Error("PDF_LIMIT");
           const metadata = await doc.getMetadata();
           const info = metadata.info as {
             Title?: string;
@@ -273,10 +282,11 @@ export default function Documents({ id }: { id: string }) {
         }
         if (
           next.reduce((n, item) => n + item.count, 0) + count > MAX_PAGES ||
-          next.reduce((n, item) => n + item.bytes.length, 0) + bytes.length >
+          next.reduce((n, item) => n + (item.bytes?.length ?? item.size), 0) +
+            (image?.bytes.length ?? file.size) >
             MAX_BYTES
         )
-          throw new Error("LIMIT");
+          throw new Error("PDF_LIMIT");
         if (
           doc &&
           !["pdf-preview", "pdf-organize", "pdf-images"].includes(id)
@@ -291,7 +301,8 @@ export default function Documents({ id }: { id: string }) {
         const item: Input = {
           id: ++counter,
           name: file.name,
-          bytes,
+          bytes: image?.bytes,
+          file,
           size: file.size,
           doc,
           count,
@@ -381,7 +392,7 @@ export default function Documents({ id }: { id: string }) {
       if (
         !Number.isFinite(scale) ||
         scale < 0.25 ||
-        scale > 3 ||
+        scale > 6 ||
         quality < 0.1 ||
         quality > 1
       )
@@ -393,6 +404,8 @@ export default function Documents({ id }: { id: string }) {
           pages[i],
           scale,
           abort.signal,
+          undefined,
+          { transparent: transparent && format !== "image/jpeg" },
         );
         let bytes: Uint8Array;
         try {
@@ -402,9 +415,9 @@ export default function Documents({ id }: { id: string }) {
         }
         if (generation.current !== serial) return;
         total += bytes.length;
-        if (total > 150 * 1024 * 1024) throw new Error("OUTPUT_LIMIT");
+        if (total > MAX_IMAGE_OUTPUT) throw new Error("OUTPUT_LIMIT");
         results.push({
-          name: `${String(i + 1).padStart(3, "0")}-page-${pages[i] + 1}.${format === "image/png" ? "png" : "jpg"}`,
+          name: `${outputName.replace(/[\/\\:*?"<>|\x00-\x1f]/g, "_").slice(0, 120) || "page"}-${String(i + 1).padStart(3, "0")}-page-${pages[i] + 1}.${format === "image/png" ? "png" : format === "image/webp" ? "webp" : "jpg"}`,
           bytes,
           type: format,
         });
@@ -425,27 +438,27 @@ export default function Documents({ id }: { id: string }) {
     }
     if (id === "pdf-merge")
       task.run("merge", {
-        inputs: inputs.map(({ name, bytes, range }) => ({
-          name,
-          bytes,
-          range,
-        })),
+        inputs: inputs.map(({ name, file, range }) => ({ name, file, range })),
+        outputName,
       });
     if (id === "pdf-split")
       task.run("split", {
-        bytes: active.bytes,
+        file: active.file,
         range,
+        outputName,
         mode: splitMode,
         size: group,
       });
     if (id === "pdf-organize")
-      task.run("organize", { bytes: active.bytes, selection });
+      task.run("organize", { file: active.file, selection, outputName });
     if (id === "images-pdf")
       task.run("images-pdf", {
         images: inputs.map(({ bytes }) => ({ bytes })),
         pageSize,
         landscape,
         margin,
+        imageOptions,
+        outputName,
       });
     if (id === "pdf-images") void exportImages();
   };
@@ -453,8 +466,8 @@ export default function Documents({ id }: { id: string }) {
     <Field
       label={l("页码范围", "Page range")}
       hint={l(
-        "留空表示全部；如 1,3-5,2，保留顺序与重复页面。",
-        "Blank means all. Example: 1,3-5,2. Order and duplicates are preserved.",
+        "留空或 all 为全部；支持 odd/even、last、3-、-5。自定义分组用分号隔开，如 1-3;4,6。",
+        "Blank/all = all pages. Supports odd/even, last, 3-, -5. Separate custom groups with semicolons: 1-3;4,6.",
       )}
     >
       <input
@@ -471,6 +484,7 @@ export default function Documents({ id }: { id: string }) {
     <div className="tool-body">
       <FilePicker
         disabled={working}
+        maxBytes={MAX_BYTES}
         multiple={multiple}
         accept={imageMode ? ".jpg,.jpeg,.png" : ".pdf"}
         onFiles={add}
@@ -561,11 +575,213 @@ export default function Documents({ id }: { id: string }) {
               </div>
             ))}
           </div>
+          {multiple && (
+            <div className="action-row">
+              <button
+                className="secondary"
+                onClick={() => {
+                  invalidate();
+                  updateInputs([...inputs].reverse());
+                }}
+              >
+                {l("反转文件顺序", "Reverse file order")}
+              </button>
+              <button
+                className="secondary"
+                onClick={() => {
+                  invalidate();
+                  updateInputs(
+                    [...inputs].sort((a, b) =>
+                      a.name.localeCompare(b.name, undefined, {
+                        numeric: true,
+                      }),
+                    ),
+                  );
+                }}
+              >
+                {l("按文件名排序", "Sort by filename")}
+              </button>
+            </div>
+          )}
+          {id !== "pdf-preview" && (
+            <div className="options-row">
+              <Field
+                label={l(
+                  "输出文件名前缀（可选）",
+                  "Output filename prefix (optional)",
+                )}
+              >
+                <input
+                  value={outputName}
+                  onChange={(e) => {
+                    invalidate();
+                    setOutputName(e.target.value);
+                  }}
+                  placeholder="vecspace"
+                />
+              </Field>
+            </div>
+          )}
+          {id === "images-pdf" && (
+            <div className="options-row">
+              <Field label="DPI">
+                <input
+                  type="number"
+                  min={36}
+                  max={1200}
+                  value={imageOptions.dpi}
+                  onChange={(e) => {
+                    invalidate();
+                    setImageOptions({
+                      ...imageOptions,
+                      dpi: Number(e.target.value),
+                    });
+                  }}
+                />
+              </Field>
+              <Field label={l("图片适配", "Image fitting")}>
+                <select
+                  value={imageOptions.fit}
+                  onChange={(e) => {
+                    invalidate();
+                    setImageOptions({ ...imageOptions, fit: e.target.value });
+                  }}
+                >
+                  <option value="contain">
+                    {l("等比适配页面", "Fit to page")}
+                  </option>
+                  <option value="shrink">
+                    {l("只缩小，不放大", "Shrink only")}
+                  </option>
+                </select>
+              </Field>
+              {pageSize === "custom" && (
+                <>
+                  {(["width", "height"] as const).map((key) => (
+                    <Field
+                      key={key}
+                      label={
+                        key === "width"
+                          ? l("宽度（mm）", "Width (mm)")
+                          : l("高度（mm）", "Height (mm)")
+                      }
+                    >
+                      <input
+                        type="number"
+                        min={1}
+                        max={5080}
+                        value={imageOptions[key]}
+                        onChange={(e) => {
+                          invalidate();
+                          setImageOptions({
+                            ...imageOptions,
+                            [key]: Number(e.target.value),
+                          });
+                        }}
+                      />
+                    </Field>
+                  ))}
+                </>
+              )}
+            </div>
+          )}
+          {id === "pdf-images" && format !== "image/jpeg" && (
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                checked={transparent}
+                onChange={(e) => {
+                  invalidate();
+                  setTransparent(e.target.checked);
+                }}
+              />
+              {l("透明背景", "Transparent background")}
+            </label>
+          )}
+          {id === "pdf-organize" && (
+            <div className="action-row">
+              <button
+                className="secondary"
+                onClick={() => {
+                  invalidate();
+                  setSelection([...selection].reverse());
+                }}
+              >
+                {l("反转页序", "Reverse pages")}
+              </button>
+              <button
+                className="secondary"
+                onClick={() => {
+                  invalidate();
+                  setSelection(
+                    selection.map((p) => ({
+                      ...p,
+                      rotation: (p.rotation + 90) % 360,
+                    })),
+                  );
+                }}
+              >
+                {l("全部旋转 90°", "Rotate all 90°")}
+              </button>
+              <button
+                className="secondary"
+                onClick={() => {
+                  invalidate();
+                  setSelection(selection.filter((p) => p.index % 2 === 0));
+                  setGallery(0);
+                }}
+              >
+                {l("仅保留原奇数页", "Keep odd source pages")}
+              </button>
+              <button
+                className="secondary"
+                onClick={() => {
+                  invalidate();
+                  setSelection(selection.filter((p) => p.index % 2 === 1));
+                  setGallery(0);
+                }}
+              >
+                {l("仅保留原偶数页", "Keep even source pages")}
+              </button>
+              <button
+                className="secondary"
+                onClick={() => {
+                  invalidate();
+                  setSelection(
+                    selection.filter(
+                      (p, i, array) =>
+                        array.findIndex((x) => x.index === p.index) === i,
+                    ),
+                  );
+                  setGallery(0);
+                }}
+              >
+                {l("移除重复页", "Remove duplicate pages")}
+              </button>
+            </div>
+          )}
+          {id === "pdf-preview" && (
+            <div className="action-row">
+              <button
+                className="secondary"
+                onClick={() => setRotation((rotation + 270) % 360)}
+              >
+                {l("向左旋转预览", "Rotate preview left")}
+              </button>
+              <button
+                className="secondary"
+                onClick={() => setRotation((rotation + 90) % 360)}
+              >
+                {l("向右旋转预览", "Rotate preview right")}
+              </button>
+              <span>{rotation}°</span>
+            </div>
+          )}
           {id === "pdf-merge" && (
             <p className="hint">
               {l(
-                "页码留空表示全部；支持 1,3-5，按文件顺序与页码顺序合并。",
-                "Leave page ranges blank for all pages. Use 1,3-5. File and page order are preserved.",
+                "页码支持 all、odd、even、last、1,3-5；按文件顺序与页码顺序合并。",
+                "Page ranges support all, odd, even, last, 1,3-5. File and page order are preserved.",
               )}
             </p>
           )}
@@ -586,6 +802,12 @@ export default function Documents({ id }: { id: string }) {
                   <option value="each">
                     {l("每页一个 PDF", "One PDF per page")}
                   </option>
+                  <option value="custom">
+                    {l(
+                      "自定义分组（分号分隔）",
+                      "Custom groups (semicolon-separated)",
+                    )}
+                  </option>
                   <option value="groups">
                     {l("固定页数分组", "Fixed-size groups")}
                   </option>
@@ -596,7 +818,7 @@ export default function Documents({ id }: { id: string }) {
                   <input
                     type="number"
                     min={1}
-                    max={300}
+                    max={MAX_PAGES}
                     value={group}
                     onChange={(e) => {
                       invalidate();
@@ -617,10 +839,17 @@ export default function Documents({ id }: { id: string }) {
                     setPageSize(e.target.value);
                   }}
                 >
+                  <option value="a3">A3</option>
                   <option value="a4">A4</option>
+                  <option value="a5">A5</option>
+                  <option value="legal">Legal</option>
+                  <option value="tabloid">Tabloid</option>
+                  <option value="custom">
+                    {l("自定义尺寸", "Custom size")}
+                  </option>
                   <option value="letter">Letter</option>
                   <option value="original">
-                    {l("按图片尺寸（96 DPI）", "Image size (96 DPI)")}
+                    {l("按图片尺寸与 DPI", "Image size & DPI")}
                   </option>
                 </select>
               </Field>
@@ -628,7 +857,7 @@ export default function Documents({ id }: { id: string }) {
                 <input
                   type="number"
                   min={0}
-                  max={144}
+                  max={288}
                   value={margin}
                   onChange={(e) => {
                     invalidate();
@@ -639,12 +868,25 @@ export default function Documents({ id }: { id: string }) {
               {pageSize !== "original" && (
                 <Field label={l("方向", "Orientation")}>
                   <select
-                    value={landscape ? "landscape" : "portrait"}
+                    value={
+                      imageOptions.autoOrientation
+                        ? "auto"
+                        : landscape
+                          ? "landscape"
+                          : "portrait"
+                    }
                     onChange={(e) => {
                       invalidate();
                       setLandscape(e.target.value === "landscape");
+                      setImageOptions({
+                        ...imageOptions,
+                        autoOrientation: e.target.value === "auto",
+                      });
                     }}
                   >
+                    <option value="auto">
+                      {l("按图片自动", "Auto per image")}
+                    </option>
                     <option value="portrait">{l("纵向", "Portrait")}</option>
                     <option value="landscape">{l("横向", "Landscape")}</option>
                   </select>
@@ -665,13 +907,14 @@ export default function Documents({ id }: { id: string }) {
                 >
                   <option value="image/png">PNG</option>
                   <option value="image/jpeg">JPEG</option>
+                  <option value="image/webp">WebP</option>
                 </select>
               </Field>
               <Field label={l("倍率（1 = 72 DPI）", "Scale (1 = 72 DPI)")}>
                 <input
                   type="number"
                   min={0.25}
-                  max={3}
+                  max={6}
                   step={0.25}
                   value={scale}
                   onChange={(e) => {
@@ -680,7 +923,7 @@ export default function Documents({ id }: { id: string }) {
                   }}
                 />
               </Field>
-              {format === "image/jpeg" && (
+              {format !== "image/png" && (
                 <Field label={l("质量（0.1–1）", "Quality (0.1–1)")}>
                   <input
                     type="number"
@@ -869,7 +1112,7 @@ export default function Documents({ id }: { id: string }) {
                     value={zoom}
                     onChange={(e) => setZoom(Number(e.target.value))}
                   >
-                    {[0.5, 0.75, 1, 1.5, 2].map((n) => (
+                    {[0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4].map((n) => (
                       <option key={n} value={n}>
                         {n * 100}%
                       </option>
@@ -900,7 +1143,12 @@ export default function Documents({ id }: { id: string }) {
                   },
                 )}
               </div>
-              <Preview input={active} page={page} zoom={zoom} />
+              <Preview
+                input={active}
+                page={page}
+                zoom={zoom}
+                rotation={rotation}
+              />
             </>
           )}
         </fieldset>
@@ -935,8 +1183,8 @@ export default function Documents({ id }: { id: string }) {
       )}
       <p className="hint">
         {l(
-          "原文件不会被修改。当前限制：合计 50 MiB、300 页；单张渲染图像最多 1600 万像素，图片导出合计最多 150 MiB。",
-          "Original files remain unchanged. Limits: 50 MiB total, 300 pages, 16 megapixels per rendered image, and 150 MiB of exported images.",
+          "原文件不会被修改。PDF 合计最多 512 MiB、5,000 页；单张图像最多 6400 万像素，图片导出合计最多 512 MiB。大文件的实际处理能力取决于设备内存。",
+          "Original files remain unchanged. Up to 512 MiB of PDFs, 5,000 pages, 64 megapixels per image, and 512 MiB of image outputs. Large-file capacity depends on device memory.",
         )}
       </p>
     </div>

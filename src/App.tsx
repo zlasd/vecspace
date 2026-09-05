@@ -366,7 +366,7 @@ export default function App() {
           )}
           <footer>
             <span>
-              VecSpace <span className="muted">/ 0.1</span>
+              VecSpace <span className="muted">/ 0.2</span>
             </span>
             <span>
               {l(

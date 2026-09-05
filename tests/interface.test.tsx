@@ -193,3 +193,94 @@ describe("worker lifecycle", () => {
     expect(third.terminate).toHaveBeenCalled();
   });
 });
+
+describe("expanded option wiring", () => {
+  it("passes UUID v5 namespace and per-line names to the worker", async () => {
+    location.pathname = "/developer/uuid";
+    await act(async () => {
+      renderer = create(
+        <LanguageProvider>
+          <App />
+        </LanguageProvider>,
+      );
+    });
+    const root = renderer!.root;
+    await act(async () =>
+      root
+        .findAllByType("select")
+        .find((select) => select.props.value === "4")!
+        .props.onChange({ target: { value: "5" } }),
+    );
+    await act(async () =>
+      root
+        .findByProps({ id: "tool-input" })
+        .props.onChange({ target: { value: "www.widgets.com" } }),
+    );
+    await act(async () =>
+      root
+        .findAllByType("button")
+        .find((button) => button.props.className === "primary")!
+        .props.onClick(),
+    );
+    const message = FakeWorker.instances[0].postMessage.mock.calls[0][0];
+    expect(message.operation).toBe("uuid");
+    expect(message.payload.version).toBe("5");
+    expect(message.payload.name).toBe("www.widgets.com");
+    expect(message.payload.namespace).toBe(
+      "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+    );
+  });
+  it("passes MD5 and Base64 output and compares Base64 hashes case-sensitively", async () => {
+    location.pathname = "/developer/hash";
+    await act(async () => {
+      renderer = create(
+        <LanguageProvider>
+          <App />
+        </LanguageProvider>,
+      );
+    });
+    const root = renderer!.root;
+    await act(async () =>
+      root
+        .findAllByType("select")
+        .find((select) => select.props.value === "SHA-256")!
+        .props.onChange({ target: { value: "MD5" } }),
+    );
+    await act(async () =>
+      root
+        .findAllByType("select")
+        .find((select) => select.props.value === "hex")!
+        .props.onChange({ target: { value: "base64" } }),
+    );
+    await act(async () =>
+      root
+        .findAllByType("input")
+        .find((input) => input.props.placeholder === "使用所选输出格式")!
+        .props.onChange({ target: { value: "abc=" } }),
+    );
+    await act(async () =>
+      root
+        .findAllByType("button")
+        .find((button) => button.props.className === "primary")!
+        .props.onClick(),
+    );
+    const worker = FakeWorker.instances[0];
+    const message = worker.postMessage.mock.calls[0][0];
+    expect(message.payload.algorithm).toBe("MD5");
+    expect(message.payload.outputFormat).toBe("base64");
+    await act(async () =>
+      worker.onmessage?.({
+        data: { id: message.id, result: { text: "Abc=" } },
+      }),
+    );
+    expect(
+      root
+        .findAllByType("div")
+        .some(
+          (node) =>
+            node.props.className === "notice error" &&
+            node.children.includes("摘要不匹配"),
+        ),
+    ).toBe(true);
+  });
+});

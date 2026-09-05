@@ -4,12 +4,13 @@ import {
   type PDFDocumentProxy,
 } from "pdfjs-dist";
 import workerURL from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import { MAX_PIXELS } from "../limits";
 GlobalWorkerOptions.workerSrc = workerURL;
 export { getDocument };
 export type { PDFDocumentProxy };
-export function openPDF(bytes: Uint8Array) {
+export function openPDF(bytes: Uint8Array, takeOwnership = false) {
   return getDocument({
-    data: bytes.slice(),
+    data: takeOwnership ? bytes : bytes.slice(),
     cMapUrl: "/vendor/pdfjs/cmaps/",
     cMapPacked: true,
     standardFontDataUrl: "/vendor/pdfjs/standard_fonts/",
@@ -25,13 +26,17 @@ export async function renderPage(
   scale: number,
   signal?: AbortSignal,
   canvas?: HTMLCanvasElement,
+  options: { rotation?: number; transparent?: boolean } = {},
 ) {
   if (signal?.aborted) throw new Error("CANCELLED");
   const page = await doc.getPage(index + 1);
   if (signal?.aborted) throw new Error("CANCELLED");
-  const viewport = page.getViewport({ scale });
+  const viewport = page.getViewport({
+    scale,
+    rotation: (page.rotate + (options.rotation || 0)) % 360,
+  });
   if (
-    viewport.width * viewport.height > 16_000_000 ||
+    viewport.width * viewport.height > MAX_PIXELS ||
     viewport.width > 16384 ||
     viewport.height > 16384
   )
@@ -45,7 +50,7 @@ export async function renderPage(
     canvasContext: context,
     canvas: target,
     viewport,
-    background: "#ffffff",
+    background: options.transparent ? "rgba(0,0,0,0)" : "#ffffff",
   });
   const cancel = () => task.cancel();
   signal?.addEventListener("abort", cancel, { once: true });
@@ -69,6 +74,7 @@ export async function canvasBytes(
       quality,
     ),
   );
+  if (blob.type !== format) throw new Error("FORMAT");
   return new Uint8Array(await blob.arrayBuffer());
 }
 export async function normalizeImage(file: File) {
@@ -88,7 +94,7 @@ export async function normalizeImage(file: File) {
   }
   try {
     if (
-      image.width * image.height > 16_000_000 ||
+      image.width * image.height > MAX_PIXELS ||
       image.width > 16384 ||
       image.height > 16384
     )

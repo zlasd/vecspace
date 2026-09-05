@@ -1,6 +1,6 @@
 {
   "name": "vecspace",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,12 +14,14 @@
   },
   "dependencies": {
     "fflate": "^0.8.3",
+    "hash-wasm": "^4.12.0",
     "lossless-json": "^4.3.1",
     "lucide-react": "^1.41.0",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.3.289",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "uuid": "^14.0.2"
   },
   "devDependencies": {
     "@napi-rs/canvas": "^1.0.8",

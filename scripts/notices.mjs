@@ -1,6 +1,8 @@
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 const packages = [
   "fflate",
+  "uuid",
+  "hash-wasm",
   "lossless-json",
   "lucide-react",
   "pdf-lib",

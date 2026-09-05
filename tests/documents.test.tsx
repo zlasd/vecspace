@@ -91,7 +91,7 @@ describe("document workflow state", () => {
     const worker = WorkerMock.last;
     const request = worker.postMessage.mock.calls[0][0];
     expect(request.operation).toBe("split");
-    expect(request.payload.bytes[0]).toBe(3);
+    expect(new Uint8Array(await request.payload.file.arrayBuffer())[0]).toBe(3);
     await act(async () =>
       worker.onmessage({
         data: {

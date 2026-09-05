@@ -1,0 +1,9 @@
+export const MiB = 1024 * 1024;
+export const MAX_TEXT = 16 * MiB;
+export const MAX_BYTES = 64 * MiB;
+export const MAX_PDF_BYTES = 512 * MiB;
+export const MAX_HASH_BYTES = 2 * 1024 * MiB;
+export const MAX_PAGES = 5000;
+export const MAX_FILES = 1000;
+export const MAX_PIXELS = 64_000_000;
+export const MAX_IMAGE_OUTPUT = 512 * MiB;

@@ -17,6 +17,10 @@ import {
   Progress,
   SelectedFile,
 } from "../components/shared";
+import ExtraOptions from "./ExtraOptions";
+import { defaults, hashAlgorithms } from "../tool-options";
+import { namespaces } from "../engines/uuid";
+import { MAX_HASH_BYTES } from "../limits";
 function Tree({ node, depth = 0 }: { node: TreeNode; depth?: number }) {
   return node.children ? (
     <details open={depth < 2} className="tree-node">
@@ -40,6 +44,14 @@ function Tree({ node, depth = 0 }: { node: TreeNode; depth?: number }) {
 export default function Developer({ id }: { id: string }) {
   const { l } = useLanguage();
   const task = useTask();
+  const [cfg, setCfg] = useState(defaults);
+  const keyOptions = {
+    curve: cfg.curve,
+    hash: cfg.keyHash,
+    saltLength: cfg.saltLength,
+    encoding: cfg.signatureEncoding,
+    ecdsaFormat: cfg.ecdsaFormat,
+  };
   const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [source, setSource] = useState("text");
@@ -75,6 +87,15 @@ export default function Developer({ id }: { id: string }) {
     setLocalResult(null);
     setLocalError("");
   };
+  const changeMode = (next: string) => {
+    setMode(next);
+    if (
+      id === "base64" &&
+      next === "encode" &&
+      !["utf-8", "utf-16le", "utf-16be", "latin1"].includes(cfg.encoding)
+    )
+      setCfg({ ...cfg, encoding: "utf-8" });
+  };
   const result = task.result || localResult;
   const run = () => {
     clearResult();
@@ -93,32 +114,59 @@ export default function Developer({ id }: { id: string }) {
           decode: mode === "decode",
           url: variant === "url",
           binary,
+          encoding: cfg.encoding,
+          padding: cfg.padding,
+          wrap: cfg.wrap,
         });
       if (id === "url")
-        setLocalResult({ text: urlCodec(text, urlMode, mode === "decode") });
+        setLocalResult({
+          text:
+            cfg.batch && !["query", "build-query"].includes(urlMode)
+              ? text
+                  .split(/\r\n|\r|\n/)
+                  .map((line) => urlCodec(line, urlMode, mode === "decode"))
+                  .join("\n")
+              : urlCodec(text, urlMode, mode === "decode"),
+        });
       if (id === "json")
         task.run("json", {
           text,
           compact: jsonMode === "compact",
           tree: jsonMode === "tree",
+          jsonOptions: {
+            indent: cfg.jsonIndent,
+            sortKeys: cfg.jsonSort,
+            ascii: cfg.jsonAscii,
+          },
         });
       if (id === "uuid") {
         if (mode === "inspect") setLocalResult({ uuid: inspectUUID(text) });
-        else {
-          if (!Number.isInteger(count) || count < 1 || count > 1000)
-            throw new Error("INPUT");
-          if (!crypto.randomUUID) throw new Error("CRYPTO");
-          setLocalResult({
-            text: Array.from({ length: count }, () => crypto.randomUUID()).join(
-              "\n",
-            ),
+        else
+          task.run("uuid", {
+            version: cfg.uuidVersion,
+            count,
+            name: text,
+            namespace:
+              cfg.uuidNamespace === "custom"
+                ? cfg.customNamespace
+                : namespaces[cfg.uuidNamespace as keyof typeof namespaces],
+            format: cfg.uuidFormat,
+            uppercase: cfg.uuidUppercase,
           });
-        }
       }
       if (id === "timestamp")
-        setLocalResult({ timestamp: convertTimestamp(text, unit, direction) });
-      if (id === "hash") task.run("hash", { ...payload, algorithm });
-      if (id === "keys") task.run("keys", { algorithm: keyAlgorithm, bits });
+        setLocalResult({
+          timestamp: convertTimestamp(text, unit, direction, cfg.timezone),
+        });
+      if (id === "hash")
+        task.run("hash", {
+          ...payload,
+          algorithm,
+          outputFormat: cfg.hashFormat,
+          inputFormat: cfg.inputFormat,
+        });
+      if (id === "keys")
+        task.run("keys", { algorithm: keyAlgorithm, bits, keyOptions });
       if (id === "signature")
         task.run(signMode, {
           ...payload,
@@ -126,8 +174,21 @@ export default function Developer({ id }: { id: string }) {
           privateKey,
           publicKey,
           signature,
+          keyOptions,
+          inputFormat: cfg.inputFormat,
         });
-      if (id === "text") task.run("text", { text, options });
+      if (id === "text")
+        task.run("text", {
+          text,
+          options: {
+            ...options,
+            normalization: cfg.normalization,
+            casing: cfg.casing,
+            collapse: cfg.collapse,
+            prefix: cfg.prefix,
+            suffix: cfg.suffix,
+          },
+        });
     } catch (error) {
       setLocalError(errorCode(error));
     }
@@ -143,14 +204,20 @@ export default function Developer({ id }: { id: string }) {
   };
   const needsText =
     !["keys"].includes(id) &&
-    !(id === "uuid" && mode !== "inspect") &&
+    !(
+      id === "uuid" &&
+      mode !== "inspect" &&
+      !["3", "5"].includes(cfg.uuidVersion)
+    ) &&
     !(id === "signature" && signMode === "match");
   const fileCapable =
     ["base64", "hash", "signature"].includes(id) &&
     !(id === "signature" && signMode === "match");
   const expectedMatch =
     result?.text && expected.trim()
-      ? result.text.toLowerCase() === expected.trim().toLowerCase()
+      ? ["hex", "HEX"].includes(cfg.hashFormat)
+        ? result.text.toLowerCase() === expected.trim().toLowerCase()
+        : result.text === expected.trim()
       : null;
   return (
     <div className="tool-body">
@@ -164,7 +231,7 @@ export default function Developer({ id }: { id: string }) {
         <div className="options-row">
           {["base64", "url"].includes(id) && (
             <Field label={l("操作", "Operation")}>
-              <select value={mode} onChange={(e) => setMode(e.target.value)}>
+              <select value={mode} onChange={(e) => changeMode(e.target.value)}>
                 <option value="encode">{l("编码", "Encode")}</option>
                 <option value="decode">{l("解码", "Decode")}</option>
               </select>
@@ -187,7 +254,7 @@ export default function Developer({ id }: { id: string }) {
                     value={binary ? "binary" : "text"}
                     onChange={(e) => setBinary(e.target.value === "binary")}
                   >
-                    <option value="text">UTF-8 {l("文本", "text")}</option>
+                    <option value="text">{l("文本", "Text")}</option>
                     <option value="binary">
                       {l("二进制文件", "Binary file")}
                     </option>
@@ -204,6 +271,10 @@ export default function Developer({ id }: { id: string }) {
               >
                 <option value="component">
                   {l("URL 组件", "URL component")}
+                </option>
+                <option value="rfc3986">RFC 3986</option>
+                <option value="build-query">
+                  {l("JSON 键值对 → 查询参数", "JSON pairs → query string")}
                 </option>
                 <option value="uri">{l("完整 URI", "Full URI")}</option>
                 <option value="form">
@@ -232,22 +303,25 @@ export default function Developer({ id }: { id: string }) {
           {id === "uuid" && (
             <>
               <Field label={l("操作", "Operation")}>
-                <select value={mode} onChange={(e) => setMode(e.target.value)}>
+                <select
+                  value={mode}
+                  onChange={(e) => changeMode(e.target.value)}
+                >
                   <option value="encode">
-                    {l("生成 UUID v4", "Generate UUID v4")}
+                    {l("生成 UUID", "Generate UUID")}
                   </option>
                   <option value="inspect">
                     {l("检查 UUID", "Inspect UUID")}
                   </option>
                 </select>
               </Field>
-              {mode !== "inspect" && (
-                <Field label={l("数量（1–1000）", "Count (1–1000)")}>
+              {mode !== "inspect" && !["3", "5"].includes(cfg.uuidVersion) && (
+                <Field label={l("数量（1–10000）", "Count (1–10000)")}>
                   <input
                     type="number"
                     value={count}
                     min={1}
-                    max={1000}
+                    max={10000}
                     onChange={(e) => setCount(Number(e.target.value))}
                   />
                 </Field>
@@ -271,6 +345,12 @@ export default function Developer({ id }: { id: string }) {
               </Field>
               <Field label={l("时间戳单位", "Timestamp unit")}>
                 <select value={unit} onChange={(e) => setUnit(e.target.value)}>
+                  <option value="microseconds">
+                    {l("微秒", "Microseconds")}
+                  </option>
+                  <option value="nanoseconds">
+                    {l("纳秒", "Nanoseconds")}
+                  </option>
                   <option value="seconds">{l("秒", "Seconds")}</option>
                   <option value="milliseconds">
                     {l("毫秒", "Milliseconds")}
@@ -286,7 +366,11 @@ export default function Developer({ id }: { id: string }) {
                       ? String(
                           unit === "seconds"
                             ? Math.floor(Date.now() / 1000)
-                            : Date.now(),
+                            : unit === "microseconds"
+                              ? BigInt(Date.now()) * 1000n
+                              : unit === "nanoseconds"
+                                ? BigInt(Date.now()) * 1000000n
+                                : Date.now(),
                         )
                       : new Date().toISOString(),
                   );
@@ -303,7 +387,7 @@ export default function Developer({ id }: { id: string }) {
                   value={algorithm}
                   onChange={(e) => setAlgorithm(e.target.value)}
                 >
-                  {["SHA-256", "SHA-384", "SHA-512"].map((a) => (
+                  {hashAlgorithms.map((a) => (
                     <option key={a}>{a}</option>
                   ))}
                 </select>
@@ -312,7 +396,10 @@ export default function Developer({ id }: { id: string }) {
                 <input
                   value={expected}
                   onChange={(e) => setExpected(e.target.value)}
-                  placeholder={l("十六进制摘要", "Hexadecimal digest")}
+                  placeholder={l(
+                    "使用所选输出格式",
+                    "Use the selected output format",
+                  )}
                 />
               </Field>
             </>
@@ -324,17 +411,26 @@ export default function Developer({ id }: { id: string }) {
                   value={keyAlgorithm}
                   onChange={(e) => setKeyAlgorithm(e.target.value)}
                 >
-                  <option value="ECDSA">ECDSA · P-256</option>
-                  <option value="RSA-PSS">RSA-PSS · SHA-256</option>
+                  {[
+                    "ECDSA",
+                    "RSA-PSS",
+                    "RSASSA-PKCS1-v1_5",
+                    "Ed25519",
+                    ...(id === "keys" ? ["RSA-OAEP", "ECDH", "X25519"] : []),
+                  ].map((a) => (
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
+                  ))}
                 </select>
               </Field>
-              {id === "keys" && keyAlgorithm === "RSA-PSS" && (
+              {id === "keys" && keyAlgorithm.startsWith("RSA") && (
                 <Field label={l("密钥长度", "Key size")}>
                   <select
                     value={bits}
                     onChange={(e) => setBits(Number(e.target.value))}
                   >
-                    {[2048, 3072, 4096].map((n) => (
+                    {[2048, 3072, 4096, 8192].map((n) => (
                       <option key={n} value={n}>
                         {n} bits
                       </option>
@@ -371,11 +467,37 @@ export default function Developer({ id }: { id: string }) {
             </Field>
           )}
         </div>
+        <ExtraOptions
+          id={id}
+          cfg={cfg}
+          change={setCfg}
+          keyAlgorithm={keyAlgorithm}
+          mode={mode}
+        />
+        {id === "hash" &&
+          ["MD5", "SHA-1", "CRC32", "Adler-32"].includes(algorithm) && (
+            <p className="hint">
+              {l(
+                "兼容性摘要与校验和，不用于密码存储或安全签名。",
+                "Legacy digests and checksums are for compatibility, not password storage or secure signatures.",
+              )}
+            </p>
+          )}
+        {id === "uuid" &&
+          ["3", "5"].includes(cfg.uuidVersion) &&
+          mode !== "inspect" && (
+            <p className="hint">
+              {l(
+                "每行一个名称；相同命名空间与名称会生成相同 UUID。空名称也会参与生成。",
+                "One name per line. The same namespace and name produce the same UUID. Empty names are included.",
+              )}
+            </p>
+          )}
         {id === "signature" && (
           <p className="hint">
             {l(
-              "签名使用 Base64。ECDSA 使用 64 字节 IEEE P1363（r‖s），RSA-PSS 的盐长度为 32 字节。",
-              "Signatures use Base64. ECDSA uses 64-byte IEEE P1363 (r‖s); RSA-PSS uses a 32-byte salt.",
+              "验签时请匹配签名算法、曲线、摘要、编码和签名结构；PSS 盐长度须与签名方一致。",
+              "Match the algorithm, curve, digest, encoding and signature structure. PSS salt length must match the signer.",
             )}
           </p>
         )}
@@ -400,7 +522,7 @@ export default function Developer({ id }: { id: string }) {
                 {label}
               </label>
             ))}
-            <Field label={l("排序（UTF-16 顺序）", "Sort (UTF-16 order)")}>
+            <Field label={l("行排序", "Line sorting")}>
               <select
                 value={options.sort}
                 onChange={(e) =>
@@ -409,6 +531,12 @@ export default function Developer({ id }: { id: string }) {
               >
                 <option value="none">{l("保持顺序", "Keep order")}</option>
                 <option value="asc">{l("升序", "Ascending")}</option>
+                <option value="natural">
+                  {l("自然排序（数字）", "Natural sort (numeric)")}
+                </option>
+                <option value="reverse">
+                  {l("反转行顺序", "Reverse line order")}
+                </option>
                 <option value="desc">{l("降序", "Descending")}</option>
               </select>
             </Field>
@@ -419,6 +547,7 @@ export default function Developer({ id }: { id: string }) {
                   setOptions({ ...options, newline: e.target.value })
                 }
               >
+                <option value="cr">CR</option>
                 <option value="lf">LF</option>
                 <option value="crlf">CRLF</option>
               </select>
@@ -479,6 +608,7 @@ export default function Developer({ id }: { id: string }) {
         {needsText && fileCapable && source === "file" && (
           <>
             <FilePicker
+              maxBytes={id === "hash" ? MAX_HASH_BYTES : undefined}
               compact
               onFiles={(files) => {
                 clearResult();
@@ -529,7 +659,12 @@ export default function Developer({ id }: { id: string }) {
               </Field>
             )}
             {signMode === "verify" && (
-              <Field label={l("签名（Base64）", "Signature (Base64)")}>
+              <Field
+                label={l(
+                  "签名（使用所选编码）",
+                  "Signature (selected encoding)",
+                )}
+              >
                 <textarea
                   className="code small"
                   value={signature}
@@ -616,6 +751,8 @@ export default function Developer({ id }: { id: string }) {
                     {
                       milliseconds: l("毫秒", "Milliseconds"),
                       seconds: l("秒", "Seconds"),
+                      microseconds: l("微秒", "Microseconds"),
+                      nanoseconds: l("纳秒", "Nanoseconds"),
                       utc: "UTC",
                       local: l("本地时间", "Local time"),
                       timezone: l("时区", "Time zone"),

@@ -3,7 +3,7 @@ import { Copy, Download, Upload, X, Check, LoaderCircle } from "lucide-react";
 import { zip } from "fflate";
 import { errors, useLanguage } from "../i18n";
 import type { ResultFile } from "../engines/pdf";
-import { MAX_BYTES } from "../engines/developer";
+import { MAX_BYTES, MAX_FILES, MiB } from "../limits";
 export function download(
   data: Uint8Array | string,
   name: string,
@@ -82,12 +82,14 @@ export function FilePicker({
   onFiles,
   disabled = false,
   compact = false,
+  maxBytes = MAX_BYTES,
 }: {
   multiple?: boolean;
   accept?: string;
   onFiles: (files: File[]) => void;
   disabled?: boolean;
   compact?: boolean;
+  maxBytes?: number;
 }) {
   const { l } = useLanguage();
   const input = useRef<HTMLInputElement>(null);
@@ -96,11 +98,11 @@ export function FilePicker({
   const take = (files: File[]) => {
     if (disabled) return;
     setError("");
-    if ((!multiple && files.length > 1) || files.length > 300) {
+    if ((!multiple && files.length > 1) || files.length > MAX_FILES) {
       setError("INPUT");
       return;
     }
-    if (files.reduce((n, f) => n + f.size, 0) > MAX_BYTES) {
+    if (files.reduce((n, f) => n + f.size, 0) > maxBytes) {
       setError("LIMIT");
       return;
     }
@@ -130,7 +132,10 @@ export function FilePicker({
         </strong>
         <span>
           {accept ? `${accept} · ` : ""}
-          {l("合计最多 50 MiB", "50 MiB total maximum")}
+          {l(
+            `合计最多 ${maxBytes / MiB} MiB`,
+            `${maxBytes / MiB} MiB total maximum`,
+          )}
         </span>
       </button>
       <input
