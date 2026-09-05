@@ -1,0 +1,39 @@
+{
+  "name": "vecspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "vitest run",
+    "check": "tsc -b",
+    "postinstall": "node scripts/pdf-assets.mjs && node scripts/notices.mjs",
+    "format": "prettier --write src tests scripts index.html vite.config.ts tsconfig.json package.json"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "lossless-json": "^4.3.1",
+    "lucide-react": "^1.41.0",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.3.289",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@napi-rs/canvas": "^1.0.8",
+    "@types/node": "^26.4.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@types/react-test-renderer": "^19.1.0",
+    "prettier": "^3.9.6",
+    "react-test-renderer": "^19.2.8",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vitest": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}

@@ -21,3 +21,6 @@ local-data/
 .DS_Store
 .idea/
 .vscode/
+
+# Copied from locked dependencies by postinstall
+public/vendor/
